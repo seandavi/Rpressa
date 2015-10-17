@@ -1,0 +1,20 @@
+Package: Rpressa
+Type: Package
+Title: A collection of useful code for bioinformatics
+Version: 1.1.2
+Date: 2014-08-23
+Author: Sean Davis <sdavis2@mail.nih.gov>
+Maintainer: Sean Davis <sdavis2@mail.nih.gov>
+Description: A collection of useful code snippets and classes for sequencing,
+    microarray, and general bioinformatics.
+Depends:
+    methods,
+    Biobase,
+    Biostrings,
+    affy,
+    IRanges,
+    ShortRead,
+    XML,
+    CGHbase
+License: GPL-2
+LazyLoad: yes

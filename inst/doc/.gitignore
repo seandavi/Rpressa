@@ -1,0 +1,8 @@
+*.tex
+*.log
+*.aux
+*.eps
+*.out
+weaver*
+sequencing_example-*
+Rplots.pdf

@@ -1,0 +1,252 @@
+%\VignetteIndexEntry{Second-Generation Sequence Data Analysis with R and Bioconductor}
+%\VignettePackage{Rpressa}
+
+\documentclass{article}
+
+\usepackage[a4paper]{geometry}
+\usepackage{hyperref,graphicx}
+
+%% \SweaveOpts{keep.source=TRUE,eps=FALSE,include=FALSE,width=4,height=4.5} 
+\newcommand{\Robject}[1]{\texttt{#1}}
+\newcommand{\Rpackage}[1]{\textit{#1}}
+\newcommand{\Rclass}[1]{\textit{#1}}
+\newcommand{\Rfunction}[1]{{\small\texttt{#1}}}
+
+\author{Sean Davis\\[1em]National Cancer Institute,\\National Institutes of Health\\Bethesda, MD, USA\\[1em]
+\texttt{sdavis2@mail.nih.gov}}
+
+\title{\textbf{Second-Generation Sequence Data Analysis with R and Bioconductor}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document has two main goals: (i) To document some common and simple use cases for sequence data analysis using R and Bioconductor and (ii) To provide a playground for experimental functions for publicly (and locally) available data.
+\end{abstract}
+
+\section{Introduction}
+Second-generation sequencing technologies bring huge data volumes, complex experimental design, algorithmic and data visualization challenges, and data integration nightmares.  While much of the technology is proprietary, the software to deal with the data has largely been left to the open-source community.  The Bioconductor project is one such open-source community that is working on problems related to second-generation sequencing.  The idea is to document workflows for as many use cases as possible, not with the goal of becoming the best tool for any particular workflow, but to provide a set of tools that are useful for sequence data analysis.  These tools are being developed collaboratively within the Bioconductor community.
+
+\section{Use Cases}
+While there are a huge number of applications for second-generation sequencing, there are a few use cases that demonstrate the current functionality for dealing with sequence data from within Bioconductor.  The use cases will necessarily be somewhat abridged and illustrative and are not meant to be ``full analyses'' by any means.  In fact, the power and flexibilty of using Bioconductor instead of a ``canned'' software can really only be appreciated by extending these analyses somewhat beyond what is presented here.
+
+Sequence analysis using R and Bioconductor relies on several ``packages'' that provide extended functionality beyond core R.  We start by loading these packages into R:
+
+<<>>=
+suppressMessages(library(ShortRead))
+suppressMessages(library(Rpressa))
+@ 
+
+\subsection{Targeted Sequencing}
+Sequencing whole genomes is still generally prohibitive in terms of time and money for most labs.  Therefore, various molecular biology methods have been developed to enrich the regions of the genome of most biological interest.  In the use case presented here, capture probes of 120 base pairs were used for hybridization of exons in genes of interest.  Approximately 27,000 120-mer probes were used for the experiment here.  The targeted genes were chosen because they have a higher likelihood of being mutated in cancer or are in pathways that are of interest in cancer.
+
+The first step is to simply load a lane of data:
+<<>>=
+data(targeted)
+targeted
+@ 
+%
+The R object \Robject{targeted} contains data on \Sexpr{length(targeted)} reads including those reads that were poor quality and those that did not align to the human genome.  Getting the reads that align to the human genome is fairly easy.
+<<>>=
+aln2 <- targeted[!is.na(position(targeted))]
+@ 
+%
+The data in \Robject{aln2} are now those reads that align to the human genome; there are \Sexpr{length(aln2)} such reads (\Sexpr{sprintf('%4.2f ',length(aln2)/length(targeted)*100)} \% of the reads).  There are a number of quality control functions and accessors that could be applied to these data.  An interesting one is to look at the proportion of bases at each cycle of the read.
+<<fig=true>>=
+library(lattice) 
+abc <- (alphabetByCycle(sread(aln2))/length(aln2))[1:4,] 
+colnames(abc) <- 1:40 
+abc <- t(abc) 
+matplot(abc,type="b",xlab="Cycle",ylab="Proportion of Reads",pch=c('A',"C","G","T"))
+@ 
+
+It is interesting to look at sequencing coverage for the capture regions as a quality control measure.  Loading the description of the capture regions from a bed-format file is quite straightforward using another Bioconductor package, \Rpackage{rtracklayer}.
+<<>>=
+suppressMessages(library(rtracklayer))
+bedfile <- system.file('extdata/agilent27k.lot1.bed',package='Rpressa')
+rl.capture <- ranges(import(bedfile))
+rl.capture
+@ 
+%
+Calculating the number of times each base in the genome has been sequenced is also easily accomplished.
+<<>>=
+cvg <- coverage(aln2)
+### Eland uses names that include the .fa, so remove them
+names(cvg) <- sub(".fa","",names(cvg))
+### get coverage for only those chromosomes for which there are
+### capture regions
+cvg <- cvg[names(cvg) %in% names(rl.capture)]
+### Finally, make a View of the capture regions
+vcvg <- Views(cvg,rl.capture)
+@ 
+%
+Now, \Robject{vcvg} is a view of the genomic coverage that contains the regions targeted by the targeting probes.  How well are the targeted regions covered?  
+<<fig=true>>=
+coverageMatrix <- t(do.call(cbind,as.list(viewApply(vcvg,as.vector))))
+plot(colMeans(coverageMatrix),type="l",col='red',xlab="Base Pairs",ylab="Coverage")
+@ 
+
+And how many regions have a mean coverage above a given threshold?
+<<fig=true>>=
+hist(rowMeans(coverageMatrix),freq=FALSE,
+     breaks="scott",xlim=c(1,100),ylim=c(0,0.01),
+     xlab="Average Coverage Per Base in a Region",ylab="Proportion of Regions")
+@ 
+
+In short, \Sexpr{sum(rowMeans(coverageMatrix)>1)} regions have mean coverage>1 while \Sexpr{sum(rowMeans(coverageMatrix)>10)} have coverage>10.
+Bioconductor also has data packages that contain the entire human genome sequence, but in a compact and random-accessible form for memory efficiency.  With this information in hand, it might be interesting to look at the effect of the GC content of the capture oligos on genomic coverage.
+<<fig=true>>=
+library(BSgenome)
+library(BSgenome.Hsapiens.UCSC.hg18)
+regionDNA <- DNAStringSet(getSeq(Hsapiens,rl.capture))
+x <- alphabetFrequency(regionDNA,as.prob=TRUE)
+avgCvg <- rowMeans(coverageMatrix)
+x <- x[avgCvg>0,2:3]
+plot(rowSums(x),avgCvg[avgCvg>0],log="xy",xlab="GC content",ylab="Coverage",pch='.')
+@ 
+
+<<echo=false,hidden=true>>=
+rm(aln2,targeted,cvg,vcvg)
+@ 
+
+\subsection{ChIP-Seq}
+This section borrows heavily from the vignette for the \Rpackage{chipseq}.  
+
+\section*{Example data}
+
+The \code{cstest} data set is included in the
+\Rpackage{chipseq} package to help demonstrate its capabilities.  The
+dataset contains data for three chromosomes from Solexa lanes, one
+from a CTCF mouse ChIP-Seq, and one from a GFP mouse ChIP-Seq.  The
+raw reads were aligned to the reference genome (mouse in this case)
+using an external program (MAQ), and the results read in using the
+\code{readReads} function, which in turn uses the \code{readAligned}
+function in the \Rpackage{ShortRead}.  This step removed all duplicate
+reads and applied a quality score cutoff.  The remaining data were
+reduced to a set of alignment start positions (including orientation).
+<<>>=
+suppressMessages(library(chipseq))
+data(cstest)
+cstest
+@ 
+%
+\section*{Extending Reads}
+The sequencer generally reads only the first n (where n is typically on the order of 36bp for ChIP-seq applications), but the typical insert size is on the order of 150-250bp.  The TFBS of interest is somewhere in that fragment (ideally), but not necessarily at the beginning.  Therefore, it is useful to extend the reads to the full length of the average fragment size.  To make the chromosomes the correct size, the lengths of the chromosomes need to be used.  
+<<>>=
+library(BSgenome.Mmusculus.UCSC.mm9)
+mouse.chromlens <- seqlengths(Mmusculus)
+head(mouse.chromlens)
+@ 
+%
+We extend all reads to be 200 bases long.  This is done using the
+\code{extendReads()} function, which can work on data from one
+chromosome in one lane.
+<<>>=
+ext <- extendReads(cstest$ctcf$chr10, seqLen = 200)
+head(ext)
+@ 
+
+As with the targeted sequencing example, computing coverage can be a useful way of looking at the data.  To keep things simple, the analysis is first restricted to chromosome 10.
+<<>>=
+cov <- coverage(ext, width = mouse.chromlens["chr10"])
+cov
+@ 
+%
+The regions of interest are contiguous segments of non-zero coverage, which the \Rpackage{chipseq} package refers to as \emph{islands}.
+<<>>=
+islands <- slice(cov, lower = 1)
+islands
+@ 
+%
+For each island, we can compute the number of reads in the island, and the maximum coverage depth within that island.
+<<>>=
+viewSums(head(islands))
+viewMaxs(head(islands))
+
+nread.tab <- table(viewSums(islands) / 200)
+depth.tab <- table(viewMaxs(islands))
+
+head(nread.tab, 10)
+head(depth.tab, 10)
+
+@ 
+%
+
+It is also possible to process all the data in all lanes simultaneously.  
+
+<<>>=
+islandReadSummary <- function(x)
+{
+    g <- extendReads(x, seqLen = 200)
+    s <- slice(coverage(g), lower = 1)
+    tab <- table(viewSums(s) / 200)
+    ans <- data.frame(nread = as.numeric(names(tab)), count = as.numeric(tab))
+    ans
+}
+@ 
+
+<<>>=
+nread.islands <- gdapply(cstest, islandReadSummary)
+nread.islands <- as(nread.islands, "data.frame")
+head(nread.islands)
+@ 
+
+A simple plot of the log(count) versus the number of reads in each island is useful.  If the reads were randomly distributed across the genome, the relationship should be linear.  In the GFP lane, this is close to true for most of the data.  However, for CTCF, there is obvious deviation from linear.  Points to the right of the line in each plot are, then, ``significant'' in some sense and a threshold of 8 reads in an island looks like a good pick for finding islands of significance.
+<<>>=
+xyplot(log(count) ~ nread | sample + chromosome, nread.islands, 
+       subset = (nread <= 40), 
+       pch = 16, type = c("p", "g"),
+       panel = function(x, y, ...) {
+           panel.lmline(x[1:3], y[1:3], col = "black")
+           panel.xyplot(x, y, ...)
+       })
+@ 
+
+<<fig=TRUE,height=10,echo=FALSE>>=
+plot(trellis.last.object())
+@ 
+
+Finding peaks is a fairly simple procedure.  Note that the threshold defined by the linear extrapolation in the plot is used.
+<<>>=
+peaks <- slice(cov,lower=8)
+peaks
+@ 
+
+<<>>=
+peak.depths <- viewMaxs(peaks)
+
+cov.pos <- coverage(extendReads(cstest$ctcf$chr10, strand = "+", seqLen = 200), 
+                    width = mouse.chromlens["chr10"])
+cov.neg <- coverage(extendReads(cstest$ctcf$chr10, strand = "-", seqLen = 200), 
+                    width = mouse.chromlens["chr10"])
+
+peaks.pos <- copyIRanges(peaks, cov.pos)
+peaks.neg <- copyIRanges(peaks, cov.neg)
+
+wpeaks <- tail(order(peak.depths), 4)
+wpeaks
+
+@ 
+%
+
+<<>>=
+coverageplot(peaks.pos[wpeaks[1]], peaks.neg[wpeaks[1]])
+@ 
+<<fig=TRUE,height=5,echo=FALSE>>=
+plot(trellis.last.object())
+@ 
+
+<<>>=
+coverageplot(peaks.pos[wpeaks[2]], peaks.neg[wpeaks[2]])
+@ 
+<<fig=TRUE,height=5,echo=FALSE>>=
+plot(trellis.last.object())
+@ 
+
+
+
+
+
+\end{document}
+
